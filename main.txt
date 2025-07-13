@@ -1,0 +1,104 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/signal"
+	"sync"
+	"syscall"
+)
+
+func main() {
+	// 1. 创建上下文用于任务控制
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 2. 设置信号处理（Ctrl+C）
+	setupSignalHandler(cancel)
+
+	// 3. 创建并配置命令
+	cmd := createCommand(ctx, "go", "run", "src\\index.go")
+	cmd.Dir = "D:\\project\\Go\\src\\go-fingerprint\\"
+	// 4. 获取输出管道
+	stdout := getOutputPipe(cmd, "stdout")
+	stderr := getOutputPipe(cmd, "stderr")
+
+	// 5. 启动任务
+	if err := cmd.Start(); err != nil {
+		fmt.Printf("启动失败: %v\n", err)
+		return
+	}
+	fmt.Printf("任务已启动 (PID: %d)\n", cmd.Process.Pid)
+
+	// 6. 启动输出处理协程
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go processOutput(&wg, stdout, "OUT")
+	go processOutput(&wg, stderr, "ERR")
+
+	// 7. 等待任务完成
+	if err := cmd.Wait(); err != nil {
+		fmt.Printf("任务结束: %v\n", err)
+	}
+
+	// 8. 等待所有输出处理完成
+	wg.Wait()
+	fmt.Println("程序退出")
+}
+
+// 创建可执行命令
+func createCommand(ctx context.Context, command string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Dir = "." // 设置工作目录
+	return cmd
+}
+
+// 获取输出管道
+func getOutputPipe(cmd *exec.Cmd, stream string) io.Reader {
+	var pipe io.Reader
+	var err error
+
+	switch stream {
+	case "stdout":
+		pipe, err = cmd.StdoutPipe()
+	case "stderr":
+		pipe, err = cmd.StderrPipe()
+	}
+
+	if err != nil {
+		fmt.Printf("创建%s管道失败: %v\n", stream, err)
+		return nil
+	}
+	return pipe
+}
+
+// 处理任务输出
+func processOutput(wg *sync.WaitGroup, reader io.Reader, prefix string) {
+	defer wg.Done()
+
+	if reader == nil {
+		return
+	}
+
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		fmt.Printf("[%s] %s\n", prefix, scanner.Text())
+	}
+}
+
+// 设置信号处理
+func setupSignalHandler(cancel context.CancelFunc) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		fmt.Println("\n收到停止信号，停止任务...")
+		cancel()
+	}()
+}
+
