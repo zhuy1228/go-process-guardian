@@ -1,0 +1,3 @@
+port: 8989
+#服务名称
+service_name: "pmg" 
