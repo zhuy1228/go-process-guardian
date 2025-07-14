@@ -5,30 +5,51 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"go-process-guardian/services"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 )
 
 var (
-	v       = flag.Bool("v", false, "查看版本")
-	start   = flag.String("start", "", "启动文件地址")
-	name    = flag.String("name", "", "名称")
-	restart = flag.String("restart", "", "重启")
-	stop    = flag.String("stop", "", "停止")
+	v           = flag.Bool("v", false, "查看版本")
+	start       = flag.String("start", "", "启动文件地址")
+	name        = flag.String("name", "", "名称")
+	restart     = flag.String("restart", "", "重启")
+	stop        = flag.String("stop", "", "停止")
+	dir         = flag.String("dir", "", "项目目录")
+	projectType = flag.String("type", "", "项目类型")
+	install     = flag.Bool("install", false, "安装")   // 安装
+	uninstall   = flag.Bool("uninstall", false, "卸载") // 卸载
 )
 
 func main() {
 	flag.Parse()
-	// 获取当前进程信息
-	fmt.Println(os.Getpid())
-	fmt.Println(os.Getppid())
+
 	if *v {
 		fmt.Println("1.0.1")
+		return
 	}
+
+	if *install {
+		services.InstallService()
+		return
+	}
+
+	if *uninstall {
+		services.UninstallService()
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := createCommandContext(ctx, *projectType, *start, *dir)
+	// 创建新的会话组脱离主进程控制
 	if *start != "" {
 		fmt.Println("启动：", *start)
 	}
@@ -42,10 +63,12 @@ func main() {
 		fmt.Println("停止：", *stop)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "run", "src\\index.go")
-	cmd.Dir = "D:\\project\\Go\\src\\go-fingerprint\\"
+	if *dir != "" {
+		cmd.Dir = *dir
+	} else {
+		cmd.Dir = "."
+	}
+
 	// if err := cmd.Start(); err != nil {
 	// 	fmt.Println("运行报错")
 	// }
@@ -103,7 +126,8 @@ func scanAndCapture(reader io.Reader, prefix string) {
 		}
 
 		// 实时显示
-		fmt.Printf("[%s] %s\n", prefix, line)
+		// fmt.Printf("[%s] %s\n", prefix, line)
+		log.Println(line)
 	}
 }
 
@@ -116,4 +140,25 @@ func setupSignalHandler() {
 		fmt.Println("\n接收到中断信号，停止子进程...")
 		os.Exit(0)
 	}()
+}
+
+func createCommandContext(ctx context.Context, projectType string, start string, dir string) *exec.Cmd {
+	var fileType string
+	if projectType != "" {
+		fileType = projectType
+	} else {
+		typeArr := strings.Split(start, ".")
+		fileType = typeArr[len(typeArr)-1]
+	}
+	log.Println()
+	switch fileType {
+	case "go":
+		return exec.CommandContext(ctx, "go", "run", start)
+	case "node":
+		return exec.CommandContext(ctx, "node", start)
+	case "exe":
+		return exec.CommandContext(ctx, dir+"\\"+start)
+	default:
+		return exec.CommandContext(ctx, "go", "run", start)
+	}
 }
